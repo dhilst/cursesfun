@@ -1,0 +1,9 @@
+[requires]
+ncurses/6.5
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[layout]
+cmake_layout
