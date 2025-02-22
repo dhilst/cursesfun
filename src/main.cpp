@@ -1,15 +1,54 @@
 #include <cassert>
 #include <climits>
-#include <functional>
-#include <iostream>
 #include <ncurses.h>
-#include <ostream>
-#include <random>
+#include <vector>
+#include <vector>
+#include <cstdlib>
+
+namespace funcs {
+
+template <typename T, typename ...Arg, typename R, template <typename> typename C = std::vector>
+static C<T> map(C<T>& input, R (T::*method)(Arg... arg), Arg... arg)
+{
+    C<R> output;
+    output.reserve(input.size());
+    for (auto& val : input) {
+        output.emplace_back((val.*method)(arg...));
+
+    }
+    return output;
+}
+
+template <typename T, typename ...Arg,  template <typename> typename C = std::vector>
+static void each(C<T>& vec, void (T::*method)(Arg... arg), Arg... arg)
+{
+    for (auto& val : vec) {
+        (val.*method)(arg...);
+    }
+}
+
+}
 
 namespace draw {
 static void point(int x, int y, char symbol)
 {
     mvaddch(y, x, symbol);
+}
+
+template <typename ...Args>
+static void str(int x, int y, auto fmt, Args... args)
+{
+    mvprintw(y, x, fmt, args...);
+}
+
+static void refr()
+{
+    refresh();
+}
+
+static void sleep(auto dt)
+{
+    napms(dt*16);
 }
 
 enum Color : int {
@@ -24,8 +63,13 @@ enum Color : int {
     MAX,
 };
 
-static void initColors()
+static void init()
 {
+    initscr();
+    noecho();
+    curs_set(0);
+    // Start color functionality
+    start_color();
     // Define color pairs (index, foreground, background)
     init_pair(draw::Color::BLACK, COLOR_BLACK, COLOR_BLACK);
     init_pair(draw::Color::RED, COLOR_RED, COLOR_BLACK);
@@ -37,20 +81,17 @@ static void initColors()
     init_pair(draw::Color::WHITE, COLOR_WHITE, COLOR_BLACK);
 }
 
+static void clear()
+{
+    ::clear();
+}
+
 
 static void color(Color c, auto draw)
 {
     attron(COLOR_PAIR(c) | A_BOLD);
     draw();
     attroff(COLOR_PAIR(c)| A_BOLD);
-}
-
-template <typename T>
-static void draw(std::vector<T> vec, auto color = Color::RED)
-{
-    for (auto& val : vec) {
-        val.draw();
-    }
 }
 
 };
@@ -145,7 +186,6 @@ struct Particle {
 
     }
 
-
     void update(auto dt) 
     {
         move(x + v.x * dt, y + v.y * dt);
@@ -155,14 +195,9 @@ struct Particle {
 
 
 int main() {
-    initscr();
-    noecho();
-    curs_set(0);
-    // Start color functionality
-    start_color();
 
     // Define color pairs (index, foreground, background)
-    draw::initColors();
+    draw::init();
 
     int iteration = 0;
     std::vector<Particle> p(100);
@@ -187,13 +222,15 @@ int main() {
 
 
     while (true) {
+        draw::clear();
         draw::color(draw::Color::GREEN, [&]() {
-            mvprintw(LINES - 1, 0, "Iteration: %d", iteration);
+            draw::str(0, LINES - 1, "Iteration: %d", iteration); 
         });
-        drawAll();
-        refresh();
-        napms(dt*16);
-        updateAll(dt);
+        funcs::each(p, &Particle::draw);
+        draw::refr();
+        draw::sleep(dt);
+        funcs::each(p, &Particle::update, dt);
+
         iteration++;
     }
 
