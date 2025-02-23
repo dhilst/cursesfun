@@ -208,22 +208,20 @@ struct Vec2 {
 };
 
 const auto gravityMag = 9.81;
-const auto gravity = Vec2{0.0, gravityMag};
 
-constexpr auto applyForce(const auto& force, const auto& obj, const double dt)
+constexpr auto applyForce(const auto& force, const auto& mass)
 {
     return Vec2{
-        obj.a.x + (force.x / obj.mass) * dt, 
-        obj.a.y + (force.y / obj.mass) * dt
+        force.x / mass,
+        force.y / mass
     };
 };
 
 struct Body {
     // Position,  Velocity and Acceleration
-    Vec2<unsigned> p{.x=0, .y=0};
+    Vec2<double> p{.x=0, .y=0};
     Vec2<double> v{.x=0, .y=0};
-    Vec2<double> a{.x=0.0, .y=0.0};
-    double mass = 5;
+    double mass = 1;
     draw::Color c;
     char ch = char(phys::random(65, 64 + 24));
 
@@ -250,12 +248,12 @@ struct Body {
     {
         if (newX < 0 ||
             newX > COLS - 1) {
-            v.x *= -1;
+            v.x *= -0.5;
         }
 
         if (newY < 0 ||
             newY > LINES - 1) {
-            v.y *= -1;
+            v.y *= -0.5;
         }
 
         funcs::CallOnce once;
@@ -276,15 +274,18 @@ struct Body {
 
     void update(auto dt) 
     {
-        a = applyForce(gravity, *this, dt);
-        draw::str(0, LINES - 2, "Acc: %f %f", a.x, a.y);
-        draw::refr();
-
         v = Vec2{
-            v.x + a.x * dt, 
-            v.y + a.y * dt
+            v.x + 0,
+            v.y + gravityMag,
         };
-        move(p.x + v.x * dt, p.y + v.y * dt);
+        auto newP = Vec2{
+            p.x + v.x * dt,
+            p.y + v.y * dt
+        };
+        move(newP.x, newP.y);
+        draw::str(30, LINES - 2, "Pos: %f %f", p.x, p.y);
+        draw::str(60, LINES - 2, "Vel: %f %f", v.x, v.y);
+        draw::refr();
     }
 };
 
@@ -313,10 +314,12 @@ int main()
     double dt = 1.0/60.0; // 60 fps
     int count = 0;
     draw::clear();
+    
+        draw::str(0, LINES - 1, "World: %dx%d", COLS, LINES); 
 
     while (true) {
         draw::color(draw::Color::RED, [&]() {
-            draw::str(0, LINES - 1, "Iteration: %d", iteration); 
+            draw::str(0, LINES - 2, "Iteration: %d", iteration); 
         });
         funcs::each(p, &Body::draw);
         draw::refr();
