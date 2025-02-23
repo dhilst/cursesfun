@@ -1,23 +1,85 @@
+#include <algorithm>
+#include <array>
+#include <bits/ranges_algo.h>
 #include <cassert>
 #include <climits>
+#include <concepts>
+#include <functional>
+#include <iostream>
 #include <ncurses.h>
+#include <ostream>
+#include <stdexcept>
 #include <vector>
+#include <ranges>
 #include <vector>
 #include <cstdlib>
 
 namespace funcs {
 
-template <typename T, typename ...Arg, typename R, template <typename> typename C = std::vector>
-static C<T> map(C<T>& input, R (T::*method)(Arg... arg), Arg... arg)
+template <typename T, template <typename> typename C = std::vector>
+static constexpr auto map(C<T>& input, auto func, auto... args)
+-> decltype(auto)
 {
-    C<R> output;
-    output.reserve(input.size());
+    C<decltype(func(std::declval<T>(), args...))> output(input.size());
     for (auto& val : input) {
-        output.emplace_back((val.*method)(arg...));
-
+        output.emplace_back(func(val, args...));
     }
     return output;
 }
+
+static constexpr int factorial(int n)
+{
+    return std::ranges::fold_left(
+        std::views::iota(1, n+1),
+        1,
+        std::multiplies<>{});
+};
+static_assert(!(factorial(4) == 23));
+static_assert(factorial(4) == 24);
+static_assert(factorial(5) == 120);
+
+static constexpr auto map2(const auto& input, auto func)
+-> decltype(auto)
+{
+    return input
+        | std::views::transform(func)
+        | std::ranges::to<std::vector>();
+}
+static_assert(map2(std::vector<int>{1,2,3,4,5},
+                   factorial)
+    == std::vector<int>{1,2,6,24,120});
+
+template <typename T, template <typename> typename C = std::vector,
+    typename R, typename... Args>
+static constexpr C<R> map(C<T>& input, R(T::*method)(Args...), Args... arg)
+{
+    constexpr C<R> output;
+    output.reserve(input.size());
+    for (auto& val : input) {
+        output.emplace_back((val.*method)(arg...));
+    }
+    return output;
+}
+
+
+struct test {
+    int v;
+    int inc() {
+        return v++;
+    }
+};
+
+static consteval auto testMap(auto cb)
+{
+    std::vector<int> vec = {1,2,3};
+    std::vector<int>value = vec
+        | std::views::transform(cb)
+        | std::ranges::to<std::vector>();
+
+    return value;
+};
+static_assert(testMap([](auto i){ return i*2; }) == std::vector<int>{2,4,6});
+
 
 template <typename T, typename ...Arg,  template <typename> typename C = std::vector>
 static void each(C<T>& vec, void (T::*method)(Arg... arg), Arg... arg)
@@ -27,12 +89,37 @@ static void each(C<T>& vec, void (T::*method)(Arg... arg), Arg... arg)
     }
 }
 
+class CallOnce {
+    bool m_done = false;
+public:
+    using Type = std::function<void()>;
+    void call(Type&& f) {
+        if (m_done) {
+            return;
+        }
+
+        m_done = true;
+        f();
+        return;
+    }
+
+    void operator()(Type&& f)
+    {
+        call(std::forward<Type>(f));
+    }
+};
+
 }
 
 namespace draw {
 static void point(int x, int y, char symbol)
 {
     mvaddch(y, x, symbol);
+}
+
+static void erase(int x, int y, char ch = ' ')
+{
+    point(x, y, ch);
 }
 
 template <typename ...Args>
@@ -48,11 +135,11 @@ static void refr()
 
 static void sleep(auto dt)
 {
-    napms(dt*16);
+    napms(dt * 1000);
 }
 
 enum Color : int {
-    BLACK = 1,
+    MIN = 0,
     RED,
     GREEN,
     YELLOW,
@@ -60,6 +147,7 @@ enum Color : int {
     MAGENTA,
     CYAN,
     WHITE,
+    BLACK,
     MAX,
 };
 
@@ -71,7 +159,7 @@ static void init()
     // Start color functionality
     start_color();
     // Define color pairs (index, foreground, background)
-    init_pair(draw::Color::BLACK, COLOR_BLACK, COLOR_BLACK);
+    // init_pair(draw::Color::BLACK, COLOR_BLACK, COLOR_BLACK);
     init_pair(draw::Color::RED, COLOR_RED, COLOR_BLACK);
     init_pair(draw::Color::GREEN, COLOR_GREEN, COLOR_BLACK);
     init_pair(draw::Color::YELLOW, COLOR_YELLOW, COLOR_BLACK);
@@ -87,8 +175,12 @@ static void clear()
 }
 
 
-static void color(Color c, auto draw)
+static void color(const Color c, const auto draw)
 {
+    if (!(c > Color::MIN && c < Color::MAX))
+    {
+        throw std::invalid_argument(std::format("Invalid color {}", static_cast<int>(c)));
+    }
     attron(COLOR_PAIR(c) | A_BOLD);
     draw();
     attroff(COLOR_PAIR(c)| A_BOLD);
@@ -96,62 +188,62 @@ static void color(Color c, auto draw)
 
 };
 
-namespace forces {
-
-template <typename T>
-static void gravity(T& obj)
-{
-    obj.move(obj.x, obj.y + 2);
-};
 
 
-};
-
-namespace nums {
-int random(int min, int max) {
+namespace phys {
+// inclusive/exclusive
+static int random(int min, int max) {
+    assert(min >= 0);
     assert(max > 0);
-    return (std::rand() % max + 1) + min;
+    assert(min < max);
+    auto v = (std::rand() % (max - min)) + min;
+    assert(v >= min);
+    assert(v < max);
+    return v;
 }
-};
-
 
 template <typename T>
-struct Velocity {
+struct Vec2 {
     T x, y;
-
-    Velocity apply(auto a, auto b, auto dt)
-    {
-        return Velocity(x + a * dt, y + b * dt);
-    }
 };
 
+const auto gravityMag = 9.81;
+const auto gravity = Vec2{0.0, gravityMag};
 
-struct Particle {
-    int x = 0;
-    int y = 0;
-    Velocity<float> v{.x=1.1, .y=1.2};
+constexpr auto applyForce(const auto& force, const auto& obj, const double dt)
+{
+    return Vec2{
+        obj.a.x + (force.x / obj.mass) * dt, 
+        obj.a.y + (force.y / obj.mass) * dt
+    };
+};
+
+struct Body {
+    // Position,  Velocity and Acceleration
+    Vec2<unsigned> p{.x=0, .y=0};
+    Vec2<double> v{.x=0, .y=0};
+    Vec2<double> a{.x=0.0, .y=0.0};
+    double mass = 5;
     draw::Color c;
-    char ch = char(nums::random(65, 64 + 24));
+    char ch = char(phys::random(65, 64 + 24));
 
-    Particle()
+    Body()
     {
-        x = nums::random(0, COLS-1);
-        y = nums::random(0, LINES-1);
-        v.x = 1 + static_cast<float>(x)/50;
-        v.y = 1 + static_cast<float>(y)/50;
-        c = draw::Color(int(nums::random(0, draw::Color::MAX)));
+        p.x = phys::random(0, COLS-1);
+        p.y = phys::random(0, LINES-1);
+        c = draw::Color(phys::random(draw::Color::MIN+1, draw::Color::MAX));
     }
 
     void draw()
     {
         draw::color(c, [&](){
-            draw::point(x, y, ch);
+            draw::point(p.x, p.y, ch);
         });
     }
 
     void erase()
     {
-        draw::point(x, y, ' ');
+        draw::point(p.x, p.y, ' ');
     }
 
     void move(int newX, int newY)
@@ -166,70 +258,70 @@ struct Particle {
             v.y *= -1;
         }
 
-        auto erased = false;
+        funcs::CallOnce once;
         if (newX >= 0 &&
             newX < COLS &&
-            newX != x) {
-            erase();
-            erased = true;
-            x = newX;
+            newX != p.x) {
+            once([&](){ erase(); });
+            p.x = newX;
         }
             
         if (newY >= 0 &&
             newY < LINES &&
-            newY != y) {
-            if (!erased) {
-                erase();
-            }
-            y = newY;
+            newY != p.y) {
+            once([&](){ erase(); });
+            p.y = newY;
         }
-
     }
 
     void update(auto dt) 
     {
-        move(x + v.x * dt, y + v.y * dt);
-        // forces::gravity(*this);
+        a = applyForce(gravity, *this, dt);
+        draw::str(0, LINES - 2, "Acc: %f %f", a.x, a.y);
+        draw::refr();
+
+        v = Vec2{
+            v.x + a.x * dt, 
+            v.y + a.y * dt
+        };
+        move(p.x + v.x * dt, p.y + v.y * dt);
     }
 };
 
+};
 
-int main() {
+template <typename T>
+std::ostream& operator<<(std::ostream& os, std::vector<T> vec)
+{
+    for (auto& v : vec) {
+        os << v << "," ; 
+    }
+    return os;
+}
 
+int main()
+{
+    using namespace phys;
     // Define color pairs (index, foreground, background)
     draw::init();
 
     int iteration = 0;
-    std::vector<Particle> p(100);
+    std::vector<Body> p(10);
 
     refresh();
 
-    timeout(100);
-    auto dt = 1;
+    double dt = 1.0/60.0; // 60 fps
     int count = 0;
-
-    auto drawAll = [&p]() {
-        for (auto& p : p) {
-            p.draw();
-        };
-    };
-
-    auto updateAll= [&p](auto dt) {
-        for (auto& p : p) {
-            p.update(dt);
-        };
-    };
-
+    draw::clear();
 
     while (true) {
-        draw::clear();
-        draw::color(draw::Color::GREEN, [&]() {
+        draw::color(draw::Color::RED, [&]() {
             draw::str(0, LINES - 1, "Iteration: %d", iteration); 
         });
-        funcs::each(p, &Particle::draw);
+        funcs::each(p, &Body::draw);
         draw::refr();
         draw::sleep(dt);
-        funcs::each(p, &Particle::update, dt);
+        funcs::each(p, &Body::update, dt);
 
         iteration++;
     }
