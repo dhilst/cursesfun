@@ -13,11 +13,14 @@ set(CMAKE_BUILD_TYPE Debug)
 message("Project dir: " ${CMAKE_SOURCE_DIR})
 message("Binary dir: " ${CMAKE_BINARY_DIR})
 
-# set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/conan_toolchain.cmake" STRING "Conan toolchain file")
+set(CMAKE_TOOLCHAIN_FILE "${CMAKE_BINARY_DIR}/generators/conan_toolchain.cmake" STRING "Conan toolchain file")
 include(${CMAKE_BINARY_DIR}/generators/conan_toolchain.cmake)
+# include(${CMAKE_BINARY_DIR}/generators/conan_toolchain.cmake)
 
 # Find ncurses package
 find_package(Curses REQUIRED)
+find_package(GTest REQUIRED)
+# ...
 # include_directories(${CURSES_INCLUDE_DIR})
 
 message("Curses libraries: " ${Curses_LIBRARIES})
@@ -34,7 +37,12 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 target_link_libraries(mypkg 
     PRIVATE
     Curses::Curses
+    gtest::gtest
 )
+
+# Enable testing and add test
+enable_testing()
+add_test(NAME MyTests COMMAND mypkg)
 
 # Set static linking
 # set_target_properties(${PROJECT_NAME} PROPERTIES

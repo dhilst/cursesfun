@@ -1,5 +1,6 @@
 [requires]
 ncurses/6.5
+gtest/1.15.0
 
 [generators]
 CMakeDeps

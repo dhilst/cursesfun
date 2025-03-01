@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <array>
 #include <bits/ranges_algo.h>
 #include <cassert>
 #include <climits>
@@ -7,16 +6,54 @@
 #include <concepts>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <ncurses.h>
+#include <numeric>
+#include <optional>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 #include <ranges>
 #include <vector>
 #include <cstdlib>
 #include <chrono>
+#include <type_traits>
+
+#include <gtest/gtest.h>
+
 
 namespace funcs {
+
+template <typename T>
+std::optional<T> pop(T& container)
+{
+    if (container.size() == 0) {
+        return std::nullopt;
+    }
+    auto last = std::move(container.back());
+    container.pop_back();
+    return last;
+}
+
+template <typename T>
+std::ostream& operator<<(std::ostream& os, std::vector<T> vec)
+{
+    for (auto& v : vec) {
+        os << v << "," ; 
+    }
+    return os;
+}
+
+std::optional<std::string> getenvopt(const char* name)
+{
+    const char* value = getenv(name);
+    if (value == NULL) {
+        return std::nullopt;
+    }
+
+    return std::make_optional(std::string(value));
+}
 
 template <typename T, template <typename> typename C = std::vector>
 static constexpr auto map(C<T>& input, auto func, auto... args)
@@ -40,16 +77,22 @@ static_assert(!(factorial(4) == 23));
 static_assert(factorial(4) == 24);
 static_assert(factorial(5) == 120);
 
-static constexpr auto map2(const auto& input, auto func)
--> decltype(auto)
+auto parseTwoNumbers(const std::string& input)
 {
-    return input
-        | std::views::transform(func)
-        | std::ranges::to<std::vector>();
+    std::pair<int, int> output;
+    char middle;
+    std::istringstream sinput(input);
+    sinput >> output.first;
+    if (sinput.peek() != ' ')
+        sinput >> middle;
+    sinput >> output.second;
+    return output;
 }
-static_assert(map2(std::vector<int>{1,2,3,4,5},
-                   factorial)
-    == std::vector<int>{1,2,6,24,120});
+
+TEST(parseTwoNumbers, BasicTtest) {
+    EXPECT_EQ(parseTwoNumbers("1 2"), std::make_pair(1,2));
+    EXPECT_EQ(parseTwoNumbers("1|2"), std::make_pair(1,2));
+};
 
 template <typename T, template <typename> typename C = std::vector,
     typename R, typename... Args>
@@ -62,26 +105,6 @@ static constexpr C<R> map(C<T>& input, R(T::*method)(Args...), Args... arg)
     }
     return output;
 }
-
-
-struct test {
-    int v;
-    int inc() {
-        return v++;
-    }
-};
-
-static consteval auto testMap(auto cb)
-{
-    std::vector<int> vec = {1,2,3};
-    std::vector<int>value = vec
-        | std::views::transform(cb)
-        | std::ranges::to<std::vector>();
-
-    return value;
-};
-static_assert(testMap([](auto i){ return i*2; }) == std::vector<int>{2,4,6});
-
 
 template <typename T, typename ...Arg,  template <typename> typename C = std::vector>
 static void each(C<T>& vec, void (T::*method)(Arg... arg), Arg... arg)
@@ -111,12 +134,29 @@ public:
     }
 };
 
+TEST(CallOnce, Basic) {
+    CallOnce callOnce;
+    auto i = 0;
+    auto inc = [&i](){ i++; };
+    callOnce(inc);
+    callOnce(inc);
+    EXPECT_EQ(i, 1);
+    inc(); inc();
+    EXPECT_EQ(i, 3);
+}
+
 }
 
 namespace draw {
+
 static void point(int x, int y, char symbol)
 {
     mvaddch(y, x, symbol);
+}
+
+template <typename T>
+static void draw(const T& ch)
+{
 }
 
 static void erase(int x, int y, char ch = ' ')
@@ -125,7 +165,7 @@ static void erase(int x, int y, char ch = ' ')
 }
 
 template <typename ...Args>
-static void str(int x, int y, auto fmt, Args... args)
+static void fmt(int x, int y, auto fmt, Args... args)
 {
     mvprintw(y, x, fmt, args...);
 }
@@ -265,23 +305,58 @@ struct Vec2 {
     };
 };
 
-constexpr auto applyForce(const auto& focus, const auto& obj, double mag = 400.0, const char ch = '0')
+constexpr auto sink(const auto& focus, const auto& obj, double mag = 400.0, const char ch = '0')
 -> decltype(auto)
 {
-    draw::color(draw::Color::RED, [&](){
-        draw::point(focus.x, focus.y, ch);
-    });
+    draw::point(focus.x, focus.y, ch, draw::Color::RED);
     
-    auto direction = Vec2{
+    auto diff = Vec2{
         focus.x - obj.p.x,
         focus.y - obj.p.y,
     };
+    auto distance = diff.mag();
+    auto direction = diff.norm();
     auto force = Vec2{
-        direction.norm().x * mag / obj.mass,
-        direction.norm().y * mag / obj.mass,
+        direction.x * mag / distance * distance,
+        direction.y * mag / distance * distance,
     };
     return force;
 };
+
+constexpr auto resistence(
+    const auto& obj, double maxVelocity = 1.0,
+    double loss = 0.1)
+{
+    auto velocity = obj.v.mag();
+    if (velocity > maxVelocity) {
+        return (-obj.v).norm() * velocity * loss;
+    }
+
+    return Vec2{0.0, 0.0};
+}
+
+constexpr auto source(const auto& focus, const auto& obj,
+                      double mag = 400.0, double minDistance = 9.0, 
+                      const char ch = '0', draw::Color c = draw::Color::BLUE)
+{
+    draw::point(focus.x, focus.y, ch, c);
+    auto diff = Vec2{
+        obj.p.x - focus.x,
+        obj.p.y - focus.y,
+    };
+
+    auto distance = diff.mag();
+    if (distance > minDistance) {
+        return Vec2{0.0,0.0};
+    }
+
+    auto direction = diff.norm();
+    auto force = Vec2{
+        direction.x * mag / obj.mass,
+        direction.y * mag / obj.mass,
+    };
+    return force;
+}
 
 struct Body {
     constexpr static auto track = false;
@@ -289,7 +364,7 @@ struct Body {
     Vec2<double> p{.x=0, .y=0};
     Vec2<double> oldp{};
     Vec2<double> v{.x=0, .y=0};
-    double mass = 10;
+    double mass = 1000;
     draw::Color c;
     char ch = char(phys::random(65, 64 + 24));
     
@@ -305,6 +380,8 @@ struct Body {
     {
         p.x = phys::random(0, COLS-1);
         p.y = phys::random(0, LINES-1);
+        v.x = phys::random(COLS*.5, COLS);
+        v.y = phys::random(LINES*.5, LINES);
         c = draw::Color(phys::random(draw::Color::MIN+1, draw::Color::MAX));
         oldp = p;
     }
@@ -329,16 +406,20 @@ struct Body {
 
     void move(const auto& newP)
     {
-        if (newP.x < 0 ||
-            newP.x > COLS - 1) {
-            //v.x *= -0.5;
-            //p.x = oldp.x;
+        if (newP.x < 0) {
+            v.x *= -0.3;
+            //p.x = COLS-1;
+        } else if (newP.x > COLS-1) {
+            v.x *= -0.3;
+            //p.x = 0;
         }
 
-        if (newP.y < 0 ||
-            newP.y > LINES - 1) {
-            //v.y *= -0.5;
-            //p.y = oldp.y;
+        if (newP.y < 0) {
+            v.y *= -0.3;
+            //p.y = LINES-1;
+        } else if (newP.y > LINES-1) {
+            v.y *= -0.3;
+            //p.y = 0;
         }
 
         funcs::CallOnce once;
@@ -359,32 +440,12 @@ struct Body {
 
     void update(auto dt) 
     {
-        const auto G = 1000;
-        auto acc = applyForce(Vec2{
-            COLS*.5,
-            LINES*.4,
-        }, *this, G*3, '^');
-        acc = acc + applyForce(Vec2{
-            COLS*.4,
-            LINES*.5,
-        }, *this, G*3, '<');
-        acc = acc + applyForce(Vec2{
-            COLS*.6,
-            LINES*.5,
-        }, *this, G*3, '>');
-        acc = acc + applyForce(Vec2{
-            COLS*.5,
-            LINES*.6,
-        }, *this, G*3, 'v');
-        acc = acc + applyForce(Vec2{
-            COLS*.5,
-            LINES*.5,
-        }, *this, G*5, '.');
-        // v = Vec2 {
-        //     (p.x - oldp.x) * 200.0 + acc.x * 2.0,
-        //     (p.y - oldp.y) * 200.0 + acc.y * 2.0,
-        // };
-        // oldp = p;
+        const auto G = 100;
+        Vec2<double> acc;
+        acc = acc + sink(Vec2{
+            COLS*.25,
+            LINES*.25,
+        }, *this, G, '0');
         v = Vec2 {
             v.x + acc.x,
             v.y + acc.y,
@@ -394,57 +455,163 @@ struct Body {
             p.y + v.y * dt * dt,
         };
         move(newP);
-        draw::str(30, LINES - 2, "Pos: %f %f", p.x, p.y);
-        draw::str(60, LINES - 2, "Vel: %f %f", v.x, v.y);
     }
 };
 
 };
+
+namespace game {
+
 
 template <typename T>
-std::ostream& operator<<(std::ostream& os, std::vector<T> vec)
+concept IDrawable = requires(T t) {
+    { t.c } -> std::same_as<draw::Color&>;
+    { t.sym } -> std::same_as<char&>;
+};
+
+struct Player final {
+    double hp = 100.0;
+    double armor = 0.0;
+    unsigned x, y;
+    
+    struct Stats {
+        double ing{0}, str{0}, dex{0}; // ing = inteligence because int is reserved
+    };
+};
+
+std::string toString(const Player&)
 {
-    for (auto& v : vec) {
-        os << v << "," ; 
-    }
-    return os;
+    return "Player";
 }
+// static_assert(IGameObj<Player>);
+
+
+// A 2D grid representing a world where we can push or pop stuff from the floor
+template <IDrawable T>
+// requires std::is_default_constructible_v<T>
+class World {
+    std::size_t m_columns, m_lines;
+
+    struct HashKey {
+        std::size_t operator ()(const std::pair<std::size_t, std::size_t>& p) const {
+            auto h1 = std::hash<std::size_t>{}(p.first);
+            auto h2 = std::hash<std::size_t>{}(p.second);
+            return h1 ^ h2;
+        }
+    };
+    std::unordered_map<std::pair<std::size_t, std::size_t>, std::vector<T>, HashKey> m_map;
+
+    static auto make_index(auto x, auto y) -> decltype(auto)
+    {
+        return std::make_pair(x, y);
+    }
+
+    std::optional<std::vector<T>> idx(std::size_t x, std::size_t y) const
+    {
+        auto i = make_index(x, y);
+        try {
+            return m_map.at(i);
+        } catch (const std::out_of_range& e) {
+            return std::nullopt;
+        }
+    };
+
+public:
+
+    World(std::size_t columns, std::size_t lines)
+    : m_columns(columns)
+    , m_lines(lines)
+    , m_map()
+    {
+    }
+
+    std::optional<T> get(std::size_t x, std::size_t y) const
+    {
+        auto v = idx(x, y);
+
+        if (v) {
+            return v.value().back();
+        }
+
+        return std::nullopt;
+    };
+
+    std::optional<T&> pop(std::size_t x, std::size_t y)
+    {
+        static_assert(x < m_map.size());
+        static_assert(m_map.size() > 0 && y < m_map[0].size());
+        return funcs::pop(idx(x, y));
+    };
+
+    void push(std::size_t x, std::size_t y, T&& value)
+    {
+        auto&& floorStack = idx(x, y);
+        if (!floorStack) {
+            m_map.emplace(make_index(x, y), std::vector{std::move(value)});
+        } else {
+            floorStack.value().push_back(std::move(value));
+        }
+    }
+
+    void draw() const
+    {
+        for (auto x = 0; x < m_columns; ++x) {
+            for (auto y = 0; y < m_lines; ++y) {
+                auto value = get(x, y);
+                if (value) {
+                    auto val = value.value();
+                    draw::point(x, y, val.sym, val.c);
+                } else {
+                    draw::point(x, y, ' ');
+                }
+            }
+        }
+    }
+
+};
+
+
+};
 
 int main()
 {
+    struct Trash {
+        char sym;
+        draw::Color c;
+    };
+    static_assert(game::IDrawable<Trash>);
+    if (getenv("TEST") != NULL) {
+        testing::InitGoogleTest();
+        return RUN_ALL_TESTS();
+    }
     using namespace phys;
     // Define color pairs (index, foreground, background)
     draw::init();
 
     int iteration = 0;
-    std::vector<Body> p(50);
+    game::Player player;
 
-    refresh();
+    game::World<Trash> world(COLS-1, LINES-1);
+    // std::vector<Body> p(3);
+    
+    const Trash banana = {')', draw::Color::YELLOW};
+    for (auto i = 0; i < 10; ++i) {
+        auto x = phys::random(0, COLS-1);
+        auto y = phys::random(0, LINES-1);
+        world.push(x, y, Trash(banana));
+    };
+
 
     double dt = 1.0/60.0; // 60 fps
     int count = 0;
     draw::clear();
-    
-    draw::str(0, LINES - 1, "World: %dx%d", COLS, LINES); 
-    auto focus = Vec2{COLS*.75, LINES*.75};
-    draw::circle(focus, 10.0); 
-    draw::circle(focus, 5.0, 'x', draw::Color::BLUE); 
-    draw::circle(focus, 1.0, 'X', draw::Color::RED); 
 
-    // draw a line
-    auto start = Vec2{1.0, 1.0};
-    auto end = Vec2{80.0, 10.0};
-    draw::line(start, end);
 
     while (true) {
-        draw::color(draw::Color::RED, [&]() {
-            draw::str(0, LINES - 2, "Iteration: %d", iteration); 
-        });
-        funcs::each(p, &Body::update, dt);
-        funcs::each(p, &Body::draw);
-        draw::refr(); // update the screen
+        draw::fmt(0, LINES - 1, "World: %dx%d", LINES, COLS); 
+        world.draw();
+        draw::refr();
         draw::sleep(dt);
-        iteration++;
     }
 
     endwin();
